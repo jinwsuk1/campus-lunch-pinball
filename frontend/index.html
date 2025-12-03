@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5899C1DJM0"></script>
+
+  <title>Marble Roulette</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="apple-touch-icon" sizes="57x57" href="assets/apple-icon-57x57.png">
+  <link rel="apple-touch-icon" sizes="60x60" href="assets/apple-icon-60x60.png">
+  <link rel="apple-touch-icon" sizes="72x72" href="assets/apple-icon-72x72.png">
+  <link rel="apple-touch-icon" sizes="76x76" href="assets/apple-icon-76x76.png">
+  <link rel="apple-touch-icon" sizes="114x114" href="assets/apple-icon-114x114.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="assets/apple-icon-120x120.png">
+  <link rel="apple-touch-icon" sizes="144x144" href="assets/apple-icon-144x144.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="assets/apple-icon-152x152.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-icon-180x180.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/android-icon-192x192.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="assets/favicon-96x96.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+  <link rel="manifest" href="assets/manifest.json">
+
+  <meta name="msapplication-TileColor" content="#ffffff">
+  <meta name="msapplication-TileImage" content="assets/ms-icon-144x144.png">
+  <meta name="theme-color" content="#ffffff">
+
+  <meta name="description" content="A lucky draw by dropping marbles, made by lazygyu">
+  <meta property="og:url" content="https://lazygyu.github.io/roulette/">
+  <meta property="og:title" content="Marble Roulette">
+  <meta property="og:description" content="A lucky draw by dropping marbles, made by lazygyu">
+  <meta property="og:site_name" content="lazygyu.github.io">
+  <meta property="og:type" content="website">
+
+  <link rel='stylesheet' href='assets/style.scss' />
+</head>
+<body>
+<script type="module" src="./src/index.ts"></script>
+<script type="text/javascript">
+  window.dataLayer = window.dataLayer || [];
+
+  function gtag() {
+    dataLayer.push(arguments);
+  }
+
+  gtag('js', new Date());
+  gtag('config', 'G-5899C1DJM0');
+
+  function getNames() {
+    const value = document.querySelector('#in_names').value.trim();
+    return value.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
+  }
+
+    // 🔽 FastAPI에서 식당 목록을 가져오는 함수
+  async function loadRestaurantsFromBackend(categories) {
+    const params = new URLSearchParams();
+    categories.forEach(c => params.append('categories', c));
+
+    const qs = categories.length ? `?${params.toString()}` : '';
+    const url = `http://127.0.0.1:8000/api/restaurants${qs}`;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error('API error: ' + res.status);
+    }
+    return await res.json(); // [{id, name, category}, ...]
+  }
+
+  // 🔽 체크된 카테고리 기준으로 textarea(#in_names)를 채우는 함수
+  async function fillNamesFromBackend() {
+    const controls = document.querySelector('#category-controls');
+    if (!controls) {
+      alert('카테고리 영역을 찾을 수 없습니다.');
+      return;
+    }
+
+    const checked = controls.querySelectorAll('input[type=checkbox]:checked');
+    const categories = Array.from(checked).map(el => el.value);
+
+    if (categories.length === 0) {
+      alert('최소 한 개의 카테고리를 선택해 주세요.');
+      return;
+    }
+
+    try {
+      const restaurants = await loadRestaurantsFromBackend(categories);
+      if (!restaurants.length) {
+        alert('해당 카테고리에 식당이 없습니다.');
+        return;
+      }
+
+      // 가게 이름만 뽑아서 "김밥천국, 홍콩반점, ..." 형태로 넣기
+      const names = restaurants.map(r => r.name);
+      const textarea = document.querySelector('#in_names');
+      textarea.value = names.join(', ');
+
+      // 룰렛 상태 갱신
+      getReady();
+    } catch (e) {
+      console.error(e);
+      alert('서버에서 식당 정보를 불러오는 중 오류가 발생했습니다.');
+    }
+  }
+
+  function parseName(nameStr) {
+    const weightRegex = /(\/\d+)/;
+    const countRegex = /(\*\d+)/;
+    const hasWeight = weightRegex.test(nameStr);
+    const hasCount = countRegex.test(nameStr);
+    const name = /^\s*([^\/*]+)?/.exec(nameStr)[1];
+    const weight = hasWeight ? parseInt(weightRegex.exec(nameStr)[1].replace('/', '')) : 1;
+    const count = hasCount ? parseInt(countRegex.exec(nameStr)[1].replace('*', '')) : 1;
+    return {
+      name,
+      weight,
+      count,
+    };
+  }
+
+  function getReady() {
+    const names = getNames();
+    window.roulette.setMarbles(names);
+    ready = names.length > 0;
+    localStorage.setItem('mbr_names', names.join(','));
+    switch (winnerType) {
+      case 'first':
+        setWinnerRank(1);
+        break;
+      case 'last':
+        const total = window.roulette.getCount();
+        setWinnerRank(total);
+        break;
+    }
+  }
+
+  function setWinnerRank(rank) {
+    document.querySelector('#in_winningRank').value = rank;
+    window.options.winningRank = rank - 1;
+    window.roulette.setWinningRank(window.options.winningRank);
+
+    if (winnerType === 'first') {
+      document.querySelector('.btn-first-winner').classList.toggle('active', true);
+      document.querySelector('.btn-last-winner').classList.toggle('active', false);
+      document.querySelector('#in_winningRank').classList.toggle('active', false);
+    } else if (winnerType === 'last') {
+      document.querySelector('.btn-first-winner').classList.toggle('active', false);
+      document.querySelector('.btn-last-winner').classList.toggle('active', true);
+      document.querySelector('#in_winningRank').classList.toggle('active', false);
+    } else if (winnerType === 'custom') {
+      document.querySelector('.btn-first-winner').classList.toggle('active', false);
+      document.querySelector('.btn-last-winner').classList.toggle('active', false);
+      document.querySelector('#in_winningRank').classList.toggle('active', true);
+    }
+  }
+
+
+  let ready = false;
+  let winnerType = 'first';
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initialize();
+  });
+
+  function initialize() {
+    if (!window.roulette || !window.roulette.isReady) {
+      console.log('does not loaded yet');
+      setTimeout(initialize, 100);
+      return;
+    }
+    console.log('initializing start');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const namesFromUrl = urlParams.get('names');
+
+    if (namesFromUrl) {
+      document.querySelector('#in_names').value = namesFromUrl.replace(/,/g, '\n');
+    } else {
+      const savedNames = localStorage.getItem('mbr_names');
+      if (savedNames) {
+        document.querySelector('#in_names').value = savedNames;
+      }
+    }
+    document.querySelector('#in_names').addEventListener('input', () => {
+      getReady();
+    });
+
+    document.querySelector('#in_names').addEventListener('blur', () => {
+      const nameSource = getNames();
+      const nameSet = new Set();
+      const nameCounts = {};
+      nameSource.forEach(nameSrc => {
+        const name = parseName(nameSrc);
+        const key = name.weight > 1 ? `${name.name}/${name.weight}` : name.name;
+        if (!nameSet.has(key)) {
+          nameSet.add(key);
+          nameCounts[key] = 0;
+        }
+        nameCounts[key] += name.count;
+      });
+      const result = [];
+      Object.keys(nameCounts).forEach(key => {
+        if (nameCounts[key] > 1) {
+          result.push(`${key}*${nameCounts[key]}`);
+        } else {
+          result.push(key);
+        }
+      });
+
+      const oldValue = document.querySelector('#in_names').value;
+      const newValue = result.join(',');
+
+      if (oldValue !== newValue) {
+        document.querySelector('#in_names').value = newValue;
+        getReady();
+      }
+    });
+
+    document.querySelector('#btnShuffle').addEventListener('click', () => {
+      getReady();
+    });
+
+    document.querySelector('#btnStart').addEventListener('click', () => {
+      if (!ready) return;
+      gtag && gtag('event', 'start', {
+        'event_category': 'roulette',
+        'event_label': 'start',
+        'value': window.roulette.getCount(),
+      });
+      window.roulette.start();
+      document.querySelector('#settings').classList.add('hide');
+      document.querySelector('#donate').classList.add('hide');
+    });
+
+    // 🔽 우리가 추가한 "서버에서 불러오기" 버튼 이벤트
+    const btnLoad = document.querySelector('#btnLoadRestaurants');
+    if (btnLoad) {
+      btnLoad.addEventListener('click', () => {
+        fillNamesFromBackend();
+      });
+    }
+    
+
+    document.querySelector('#chkAutoRecording').addEventListener('change', (e) => {
+      window.options.autoRecording = e.target.matches(':checked');
+      window.roulette.setAutoRecording(window.options.autoRecording);
+    });
+
+    document.querySelector('#chkSkill').addEventListener('change', (e) => {
+      window.options.useSkills = e.target.matches(':checked');
+      window.roulette.setWinningRank(window.options.winningRank);
+    });
+
+    document.querySelector('#chkDarkMode').addEventListener('change', (e) => {
+      window.options.darkMode = e.target.matches(':checked');
+      window.roulette.setTheme(window.options.darkMode ? 'dark' : 'light');
+      document.documentElement.classList.toggle('light', !window.options.darkMode);
+    });
+
+    document.querySelector('#in_winningRank').addEventListener('change', (e) => {
+      const v = parseInt(e.target.value, 10);
+      winnerType = 'custom';
+      setWinnerRank(isNaN(v) ? 0 : v);
+    });
+
+    document.querySelector('.btn-last-winner').addEventListener('click', () => {
+      const total = window.roulette.getCount();
+      winnerType = 'last';
+      setWinnerRank(total);
+    });
+    document.querySelector('.btn-first-winner').addEventListener('click', () => {
+      winnerType = 'first';
+      setWinnerRank(1);
+    });
+
+    window.roulette.addEventListener('goal', () => {
+      ready = false;
+      setTimeout(() => {
+        document.querySelector('#settings').classList.remove('hide');
+        document.querySelector('#donate').classList.remove('hide');
+      }, 3000);
+    });
+
+    window.roulette.addEventListener('message', (e) => {
+      simpleToast(e.detail);
+    });
+
+    document.querySelector('#btnShuffle').click();
+
+    const maps = window.roulette.getMaps();
+    const mapSelector = document.querySelector('#sltMap');
+    maps.forEach((map) => {
+      const option = document.createElement('option');
+      option.value = map.index;
+      option.innerHTML = map.title;
+      option.setAttribute('data-trans', '');
+      window.translateElement(option);
+      mapSelector.append(option);
+    });
+    mapSelector.addEventListener('change', (e) => {
+      const index = e.target.value;
+      window.roulette.setMap(index);
+    });
+
+    const checkDonateButtonLoaded = () => {
+      const btn = document.querySelector('span.bmc-btn-text');
+      if (!btn) {
+        setTimeout(checkDonateButtonLoaded, 100);
+      } else {
+        console.log('donation button has been loaded');
+        btn.setAttribute('data-trans', '');
+        window.translateElement(btn);
+      }
+    };
+    setTimeout(checkDonateButtonLoaded, 100);
+
+    const currentNotice = 2;
+    const noticeKey = 'lastViewedNotification';
+
+    const closeNotice = () => {
+      document.querySelector('#notice').style.display = 'none';
+      localStorage.setItem(noticeKey, currentNotice.toString());
+    };
+
+    const openNotice = () => {
+      console.log('openNotice');
+      document.querySelector('#notice').style.display = 'flex';
+    };
+
+    document.querySelector('#closeNotice').addEventListener('click', () => {
+      closeNotice();
+    });
+
+    document.querySelector('#btnNotice').addEventListener('click', () => {
+      openNotice();
+    });
+
+    function simpleToast(msg) {
+      const toast = document.createElement('div');
+      toast.classList.add('toast');
+      toast.innerHTML = msg;
+
+      if (window.translateElement) {
+        console.log('try to translate');
+        window.translateElement(toast);
+      }
+
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        document.body.removeChild(toast);
+      }, 1200);
+    }
+
+    const checkNotice = () => {
+      const lastViewed = localStorage.getItem(noticeKey);
+      console.log('lastViewed', lastViewed);
+      if (lastViewed === null || Number(lastViewed) < currentNotice) {
+        openNotice();
+      }
+    };
+
+    checkNotice();
+  }
+</script>
+<div id="settings" class="settings">
+  <div class="right">
+    <div class="row">
+      <label for='sltMap'>
+        <i class="icon map"></i>
+        <span data-trans>Map</span>
+      </label>
+      <select id="sltMap"></select>
+    </div>
+    <div class="row">
+      <label for='chkAutoRecording'>
+        <i class="icon record"></i>
+        <span data-trans>Recording</span>
+      </label>
+      <input type="checkbox" id="chkAutoRecording" />
+    </div>
+    <div class="row">
+      <label>
+        <i class="icon trophy"></i>
+        <span data-trans>The winner is</span>
+      </label>
+      <div class="btn-group">
+        <button class="btn-winner btn-first-winner active" data-trans>First</button>
+        <button class="btn-winner btn-last-winner" data-trans>Last</button>
+        <input type="number" id="in_winningRank" value="1" min="1" />
+      </div>
+    </div>
+    <div class="row">
+      <label for='chkSkill'>
+        <i class="icon bomb"></i>
+        <span data-trans>Using skills</span>
+      </label>
+      <input type="checkbox" id="chkSkill" checked />
+      <div class='theme'>
+        <i class='icon sun'></i>
+        <input type='checkbox' id='chkDarkMode' checked />
+        <i class='icon moon'></i>
+      </div>
+    </div>
+  </div>
+  <div class="left">
+     <!-- 🔐 로그인 영역 -->
+    <div id="auth-panel" style="margin-bottom: 10px; font-size: 13px;">
+      <div style="margin-bottom: 4px;">
+        <strong>로그인 상태</strong> :
+        <span id="user-info">로그인하지 않음</span>
+      </div>
+      <button id="login-btn" type="button">Google 로그인</button>
+      <button id="logout-btn" type="button" style="display:none; margin-left:4px;">
+        로그아웃
+      </button>
+      <button id="btnTestMe" type="button" style="margin-left:6px;">
+        /api/me 테스트
+      </buttton>
+    </div>
+
+    <!-- 🔽 우리가 추가하는 카테고리/버튼 영역 -->
+    <h3>점심 카테고리 선택</h3>
+    <div id="category-controls">
+      <label><input type="checkbox" value="korean" checked> 한식</label>
+      <label><input type="checkbox" value="japanese"> 일식</label>
+      <label><input type="checkbox" value="chinese"> 중식</label>
+      <label><input type="checkbox" value="snack"> 분식</label>
+      <label><input type="checkbox" value="cafe"> 카페</label>
+      <button id="btnLoadRestaurants" type="button" style="margin-left:8px;">
+        서버에서 불러오기
+      </button>
+    </div>
+    <h3 data-trans>Enter names below</h3>
+    <textarea id="in_names" placeholder="Input names separated by commas or line feed here" data-trans="placeholder">짱구*5, 짱아*10, 봉미선*3</textarea>
+    <div class="actions">
+      <button id="btnNotice">
+        <i class="icon megaphone"></i>
+      </button>
+      <div class="sep"></div>
+      <button id="btnShuffle">
+        <i class="icon shuffle"></i>
+        <span data-trans>Shuffle</span>
+      </button>
+      <button id="btnStart">
+        <i class="icon play"></i>
+        <span data-trans>Start</span>
+      </button>
+    </div>
+  </div>
+</div>
+<!-- <div id="donate">
+  <script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"
+          data-name="bmc-button" data-slug="lazygyu" data-color="#FFDD00" data-emoji=""
+          data-font="Comic" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#000000"
+          data-coffee-color="#ffffff"></script>
+</div> -->
+<div id="notice">
+  <h1>Notice</h1>
+  <div class="notice-body">
+    <p>마블 룰렛 사용자 여러분 안녕하세요. 개발자 lazygyu 입니다.</p>
+    <p>최근 마블 룰렛에 <a href='https://lazygyu.net/blog/stolen-copyright' target='_blank'>저작권 관련한 사건</a>이 발생하여 많은 분들께 우려를
+      끼쳐드렸습니다.</p>
+    <p>이런 사정을 알고 <a href='https://www.youtube.com/@%EA%BD%89%EB%B3%80%ED%98%B8%EC%82%AC' target='_blank'>꽉변호사</a>님께서 법적
+      조치에 도움을 주겠다고 연락을 주셨습니다.</p>
+    <p>법적 절차에 필요한 비용을 모금을 통해 충당할 예정이고, 혹시 사용 후 남은 금액이 있다면 전액 사회적 약자를 위한 공익 소송을 담당하고 있는 <a
+      href='https://www.legalaid.or.kr/' target='_blank'>대한변협법률구조재단</a>에
+      기부됩니다.</p>
+    <p>이 프로그램 뿐 아니라 이러한 저작권 문제로 고통받는 다른 분들께도 좋은 선례가 될 수 있도록 도와주세요!<br />
+    </p>
+    <p>
+      <bold>모금 마감되었습니다. 여러분의 성원에 진심으로 감사드립니다.</bold>
+    </p>
+  </div>
+  <div class="notice-action">
+    <button id="closeNotice" data-trans>Close</button>
+  </div>
+</div>
+<div class="copyright">&copy; 2022-2025.<a href="https://lazygyu.net" target="_blank">lazygyu</a> <span data-trans>This program is freeware and may be used freely anywhere, including in broadcasts and videos.</span>
+</div>
+</body>
+</html>

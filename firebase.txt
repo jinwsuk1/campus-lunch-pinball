@@ -1,0 +1,14 @@
+const firebaseConfig = {
+  apiKey: "AIzaSyCQtaX9NELWsfWSfVCk82Mz3vkBIoPzPng",
+  authDomain: "campus-lunch-pinball.firebaseapp.com",
+  projectId: "campus-lunch-pinball",
+  storageBucket: "campus-lunch-pinball.firebasestorage.app",
+  messagingSenderId: "173018551160",
+  appId: "1:173018551160:web:af6f3822046c711e9d2e8d",
+  measurementId: "G-7B2ZEVVK20"
+};
+
+
+.\.venv\Scripts\activate
+
+yarn dev
