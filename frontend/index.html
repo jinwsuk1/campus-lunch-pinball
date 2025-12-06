@@ -52,6 +52,15 @@
     return value.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
   }
 
+  // 🔽 식당 이름 비교용 정규화 함수 (양쪽 공백 제거)
+  function normalizeRestaurantName(name) {
+    return (name || '').trim();
+  }
+
+  // 서버에서 불러온 식당 상세 정보 (이름 -> 레코드)
+  window.restaurantDetails = {};
+  let lastWinnerName = null;
+
     // 🔽 FastAPI에서 식당 목록을 가져오는 함수
   async function loadRestaurantsFromBackend(categories) {
     const params = new URLSearchParams();
@@ -90,6 +99,13 @@
         return;
       }
 
+      // 🔽 이름 -> 레코드(map) 저장 (메뉴 보기에서 사용)
+      window.restaurantDetails = {};
+      restaurants.forEach(r => {
+        const key = normalizeRestaurantName(r.name);
+        window.restaurantDetails[key] = r;
+      });
+
       // 가게 이름만 뽑아서 "김밥천국, 홍콩반점, ..." 형태로 넣기
       const names = restaurants.map(r => r.name);
       const textarea = document.querySelector('#in_names');
@@ -97,11 +113,112 @@
 
       // 룰렛 상태 갱신
       getReady();
+
+      // 새로 불러오면 이전 당첨 정보/메뉴 패널 리셋
+      lastWinnerName = null;
+      const winnerSpan = document.querySelector('#winner-name');
+      const menuPanel = document.querySelector('#menu-panel');
+      const btnShowMenu = document.querySelector('#btnShowMenu');
+      if (winnerSpan) winnerSpan.textContent = '아직 당첨된 음식점이 없습니다.';
+      if (menuPanel) menuPanel.style.display = 'none';
+      if (btnShowMenu) btnShowMenu.style.display = 'none';
+
     } catch (e) {
       console.error(e);
       alert('서버에서 식당 정보를 불러오는 중 오류가 발생했습니다.');
     }
   }
+
+    // 🔽 현재 체크된 카테고리 배열로 가져오기
+  function getSelectedCategories() {
+    const controls = document.querySelector('#category-controls');
+    if (!controls) return [];
+    const checked = controls.querySelectorAll('input[type=checkbox]:checked');
+    return Array.from(checked).map(el => el.value);
+  }
+
+  // 🔽 카테고리 배열을 받아서 체크박스 상태에 반영
+  function applyCategoriesToUI(categories) {
+    const controls = document.querySelector('#category-controls');
+    if (!controls) return;
+    const checkboxes = controls.querySelectorAll('input[type=checkbox]');
+    const set = new Set(categories);
+    checkboxes.forEach((el) => {
+      el.checked = set.has(el.value);
+    });
+  }
+
+  // 🔽 로그인한 사용자의 선호 카테고리를 백엔드에 저장
+  async function savePreferencesToBackend() {
+    const token = window.currentIdToken;
+    if (!token) {
+      alert('로그인 후 사용할 수 있습니다.');
+      return;
+    }
+
+    const categories = getSelectedCategories();
+
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/me/preferences', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token,
+        },
+        body: JSON.stringify({ default_categories: categories }),
+      });
+
+      if (!res.ok) {
+        alert('선호 카테고리 저장에 실패했습니다. (status ' + res.status + ')');
+        return;
+      }
+
+      alert('선호 카테고리가 저장되었습니다.');
+    } catch (e) {
+      console.error(e);
+      alert('선호 카테고리를 저장하는 중 오류가 발생했습니다.');
+    }
+  }
+
+  // 🔽 로그인한 사용자의 선호 카테고리를 불러와서 체크박스/텍스트 반영
+  async function loadPreferencesFromBackend() {
+    const token = window.currentIdToken;
+    if (!token) {
+      alert('로그인 후 사용할 수 있습니다.');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/me/preferences', {
+        headers: {
+          'Authorization': 'Bearer ' + token,
+        },
+      });
+
+      if (!res.ok) {
+        alert('선호 카테고리를 불러오지 못했습니다. (status ' + res.status + ')');
+        return;
+      }
+
+      const data = await res.json();
+      const categories = Array.isArray(data.default_categories)
+        ? data.default_categories
+        : [];
+
+      // 체크박스 상태 반영
+      applyCategoriesToUI(categories);
+
+      // 체크박스를 반영한 뒤, 해당 카테고리 기준으로 서버에서 식당 목록 다시 가져오기
+      await fillNamesFromBackend();
+    } catch (e) {
+      console.error(e);
+      alert('선호 카테고리를 불러오는 중 오류가 발생했습니다.');
+    }
+  }
+
+  // 원하면 auth.ts에서 바로 호출할 수 있게 window 에도 달아놓기 (옵션)
+  window.loadUserPreferences = loadPreferencesFromBackend;
+
 
   function parseName(nameStr) {
     const weightRegex = /(\/\d+)/;
@@ -232,14 +349,29 @@
       document.querySelector('#donate').classList.add('hide');
     });
 
-    // 🔽 우리가 추가한 "서버에서 불러오기" 버튼 이벤트
+        // 🔽 우리가 추가한 "서버에서 불러오기" 버튼 이벤트
     const btnLoad = document.querySelector('#btnLoadRestaurants');
     if (btnLoad) {
       btnLoad.addEventListener('click', () => {
         fillNamesFromBackend();
       });
     }
-    
+
+    // 🔽 "선호 카테고리 불러오기" 버튼
+    const btnLoadPrefs = document.querySelector('#btnLoadPrefs');
+    if (btnLoadPrefs) {
+      btnLoadPrefs.addEventListener('click', () => {
+        loadPreferencesFromBackend();
+      });
+    }
+
+    // 🔽 "선호 카테고리 저장" 버튼
+    const btnSavePrefs = document.querySelector('#btnSavePrefs');
+    if (btnSavePrefs) {
+      btnSavePrefs.addEventListener('click', () => {
+        savePreferencesToBackend();
+      });
+    }
 
     document.querySelector('#chkAutoRecording').addEventListener('change', (e) => {
       window.options.autoRecording = e.target.matches(':checked');
@@ -360,6 +492,67 @@
     };
 
     checkNotice();
+
+        // ------ 여기서부터: 당첨 결과 + 메뉴 보기 설정 ------
+
+    const winnerNameSpan = document.querySelector('#winner-name');
+    const btnShowMenu = document.querySelector('#btnShowMenu');
+    const menuPanel = document.querySelector('#menu-panel');
+    const menuTitle = document.querySelector('#menu-title');
+    const menuList = document.querySelector('#menu-list');
+
+    // 핀볼에서 'goal' 커스텀 이벤트를 보내고 있음 (roulette.ts 에서 dispatchEvent('goal', {detail:{winner: ...}}))
+    window.roulette.addEventListener('goal', (event) => {
+      const winner = event.detail && event.detail.winner;
+      if (!winner) return;
+
+      if (winnerNameSpan) {
+        winnerNameSpan.textContent = `당첨된 음식점: ${winner}`;
+      }
+
+      lastWinnerName = normalizeRestaurantName(winner);
+
+      if (btnShowMenu) {
+        btnShowMenu.style.display = 'inline-block';
+      }
+      if (menuPanel) {
+        // 새 결과가 나오면 이전 메뉴 패널은 일단 숨기기
+        menuPanel.style.display = 'none';
+      }
+    });
+
+    if (btnShowMenu) {
+      btnShowMenu.addEventListener('click', () => {
+        if (!lastWinnerName) {
+          alert('아직 당첨된 음식점이 없습니다.');
+          return;
+        }
+
+        const detailsMap = window.restaurantDetails || {};
+        const key = normalizeRestaurantName(lastWinnerName);
+        const info = detailsMap[lastWinnerName];
+
+        if (!info || !info.description) {
+          alert('이 음식점의 메뉴 정보가 없습니다.');
+          return;
+        }
+
+        if (menuTitle) {
+          menuTitle.textContent = `${lastWinnerName} 대표 메뉴`;
+        }
+        if (menuList) {
+          const items = info.description
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+          menuList.innerHTML = items.map((m) => `• ${m}`).join('<br>');
+        }
+        if (menuPanel) {
+          menuPanel.style.display = 'block';
+        }
+      });
+    }
+
   }
 </script>
 <div id="settings" class="settings">
@@ -429,9 +622,31 @@
       <button id="btnLoadRestaurants" type="button" style="margin-left:8px;">
         서버에서 불러오기
       </button>
+      <button id="btnLoadPrefs" type="button" style="margin-left:8px;">
+        선호 카테고리 불러오기
+      </button>
+      <button id="btnSavePrefs" type="button" style="margin-left:4px;">
+        선호 카테고리 저장
+      </button>
     </div>
-    <h3 data-trans>Enter names below</h3>
-    <textarea id="in_names" placeholder="Input names separated by commas or line feed here" data-trans="placeholder">짱구*5, 짱아*10, 봉미선*3</textarea>
+      <div id="winner-panel" style="margin-top:8px; font-size:14px;">
+    <span id="winner-name">아직 당첨된 음식점이 없습니다.</span>
+    <button id="btnShowMenu" type="button" style="display:none; margin-left:8px;">
+      메뉴 보기
+    </button>
+  </div>
+
+  <div id="menu-panel"
+       style="display:none; margin-top:6px; padding:6px 8px; background:#222; color:#fff; font-size:13px; border-radius:4px;">
+    <div id="menu-title" style="font-weight:bold; margin-bottom:4px;"></div>
+    <div id="menu-list"></div>
+  </div>
+
+  <h3 data-trans>Enter names below</h3>
+  <textarea id="in_names" ...></textarea>
+
+    <!-- <h3 data-trans>Enter names below</h3>
+    <textarea id="in_names" placeholder="Input names separated by commas or line feed here" data-trans="placeholder">짱구*5, 짱아*10, 봉미선*3</textarea> -->
     <div class="actions">
       <button id="btnNotice">
         <i class="icon megaphone"></i>
